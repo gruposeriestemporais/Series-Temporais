@@ -1,0 +1,126 @@
+library(quantmod)
+
+#Cria um novo ambiente para armazenar os dados
+stockData <- new.env() 
+
+#Especifica as datas de interesse
+startDate = as.Date("2011-01-01") 
+endDate = as.Date("2011-12-31")
+
+#Obtêm os dados do ativo PETR4 e PETR3
+getSymbols("PETR4.SA", src="yahoo",from=startDate,to=endDate)
+
+#Calcula o log-retorno
+retorno<-na.omit(diff(log(Cl(PETR4.SA))))
+
+#Estima o VaR pelo método NFHS (lambda=0.05)
+library(fGarch)
+lambda<-0.05
+
+#Passo1: Encotrando os resíduos padronizados
+fit<-arima(retorno,order=c(1,0,0))
+fit.res<-resid(fit)
+modelo.N.FHS <- garchFit( ~garch(1, 1), fit.res , cond.dist = "norm")
+sresi<-(modelo.N.FHS@residuals/modelo.N.FHS@sigma.t) 
+
+#Passo2: Obtem-se sigma_t+1 e mu_t+1
+mu.t1<- predict(fit, n.ahead=1)$pred[1]
+sigma.t1<-predict(modelo.N.FHS , n.ahead=1)[1,1]
+
+#Passo3: Para o período t+1 gera-se um conjunto de Retornos
+uniforme<-ceiling(runif(1000)*length(sresi))
+Retornos<-(sresi[uniforme]*sigma.t1)+mu.t1
+
+#Passo4: Calcular o VaR
+VaR.t1<- -quantile(Retornos, lambda) 
+VaR.t1 # a probabilidade de se obter um retorno menor do que 0.05831% é de 5%.
+
+#Estima o VaR pelo método STFHS (lambda=0.05)
+lambda<-0.05
+
+#Passo1: Encotrando os resíduos padronizados
+fit<-arima(retorno,order=c(1,0,0))
+fit.res <- resid(fit)
+modelo.N.FHS <- garchFit( ~garch(1, 1), fit.res , cond.dist = "sstd")
+sresi<-(modelo.N.FHS@residuals/modelo.N.FHS@sigma.t) 
+
+#Passo2: Obtem-se sigma_t+1 e mu_t+1
+mu.t1<- predict(fit, n.ahead=1)$pred[1]
+sigma.t1<-predict(modelo.N.FHS , n.ahead=1)[1,1]
+
+#Passo3: Para o período t+1 gera-se um conjunto de Retornos
+uniforme<-ceiling(runif(1000)*length(sresi))
+Retornos<-(sresi[uniforme]*sigma.t1)+mu.t1
+
+#Passo4: Calcular o VaR
+VaR.t1<- -quantile(Retornos, lambda)
+VaR.t1 # praticamente o mesmo valor
+
+#Estima o VaR pelo método NEVT (lambda=0.05)
+library(fGarch)
+lambda<-0.05
+ 
+#Passo1: Encotrando os resíduos padronizados
+fit<-arima(retorno,order=c(1,0,0))
+fit.res <- resid(fit)
+modelo.N.EVT <- garchFit( ~garch(1, 1), fit.res , cond.dist = "norm")
+sresi<-(modelo.N.EVT@residuals/modelo.N.EVT@sigma.t) 
+
+#Passo2: Obtem-se sigma_t+1 e mu_t+1
+mu.t1<- predict(fit, n.ahead=1)$pred[1]
+sigma.t1<-predict(modelo.N.EVT , n.ahead=1)[1,1]
+
+#Passo3: Estima o quantil com base na distribuição GEV
+library(fExtremes)
+sresi.menos<- -sresi
+MLE<- gevFit(sresi.menos,type="pwm")
+xi<- MLE@fit$par.ests[1]
+
+mu<- MLE@fit$par.ests[2]
+
+sigma<- MLE@fit$par.ests[3]
+ 
+#Passo4: Calcular o VaR
+quantil<- qgev(lambda, xi = xi, mu = mu, beta = sigma, lower.tail = TRUE)
+VaR.t1<- -(mu.t1+quantil[1]*sigma.t1)
+VaR.t1
+
+
+#Estima o VaR pelo método STEVT (lambda=0.05)
+library(fGarch)
+lambda<-0.05
+ 
+#Passo1: Encotrando os resíduos padronizados
+fit<-arima(retorno,order=c(1,0,0))
+fit.res <- resid(fit)
+modelo.N.ST.EVT <- garchFit( ~garch(1, 1), fit.res , cond.dist = "sstd")
+sresi<-(modelo.N.ST.EVT@residuals/modelo.N.ST.EVT@sigma.t) 
+
+#Passo2: Obtem-se sigma_t+1 e mu_t+1
+mu.t1<- predict(fit, n.ahead=1)$pred[1]
+sigma.t1<-predict(modelo.N.ST.EVT , n.ahead=1)[1,1]
+
+#Passo3: Estima o quantil com base na distribuição GEV
+library(fExtremes)
+sresi.menos<- -sresi
+MLE<- gevFit(sresi.menos,type="pwm")
+xi<- MLE@fit$par.ests[1]
+
+mu<-MLE@fit$par.ests[2]
+
+sigma<-MLE@fit$par.ests[3]
+ 
+#Passo4: Calcular o VaR
+quantil<-qgev(lambda, xi = xi, mu = mu, beta = sigma, lower.tail = TRUE)
+VaR.t1<- -(mu.t1+quantil[1]*sigma.t1)
+VaR.t1
+
+VaR<-c(0.0005831443,0.0005831344,0.0005803806,0.0005803871)*100
+ 
+mybarcol <- "gray20"
+barplot(VaR, beside = TRUE,
+ col = c("lightblue", "mistyrose","lightcyan", "lavender"),
+ legend = c("NFHS","STFHS","NEVT","STEVT"), 
+ main = "Value at Risk (VaR)", font.main = 4,
+ sub = "Petr4", col.sub = mybarcol, ylab="% VaR",
+ylim= c(min(VaR),max(VaR)))
